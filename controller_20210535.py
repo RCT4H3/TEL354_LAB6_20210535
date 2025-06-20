@@ -24,7 +24,7 @@ class Alumno:
         self.mac = mac.upper()  
     
     def __str__(self):
-        return f"Alumno: {self.nombre} ({self.codigo}) - MAC: {self.mac}"
+        return f"Alumno OwO: {self.nombre} ({self.codigo}) - MAC: {self.mac}"
     
     def to_dict(self):
         return {
