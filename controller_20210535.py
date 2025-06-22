@@ -9,10 +9,10 @@ import yaml
 import json
 import requests
 import sys
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 # Configuración del controlador Floodlight
-FLOODLIGHT_HOST = "10.20.12.175"
+FLOODLIGHT_HOST = "localhost"
 FLOODLIGHT_PORT = 8080
 FLOODLIGHT_URL = f"http://{FLOODLIGHT_HOST}:{FLOODLIGHT_PORT}"
 
@@ -24,7 +24,7 @@ class Alumno:
         self.mac = mac.upper()  
     
     def __str__(self):
-        return f"Alumno OwO: {self.nombre} ({self.codigo}) - MAC: {self.mac}"
+        return f"Alumno: {self.nombre} ({self.codigo}) - MAC: {self.mac}"
     
     def to_dict(self):
         return {
@@ -207,6 +207,31 @@ class SDNApp:
         except Exception as e:
             print(f"Error al exportar: {e}")
     
+    def alumno_autorizado(self, codigo_alumno: str, nombre_servidor: str, nombre_servicio: str) -> bool:
+        """Verificar si un alumno está autorizado para acceder a un servicio"""
+        if codigo_alumno not in self.alumnos:
+            return False
+        
+        if nombre_servidor not in self.servidores:
+            return False
+        
+        servidor = self.servidores[nombre_servidor]
+        servicio = servidor.obtener_servicio(nombre_servicio)
+        if not servicio:
+            return False
+        
+        # Verificar en todos los cursos
+        for curso in self.cursos.values():
+            if (curso.estado == "DICTANDO" and 
+                codigo_alumno in curso.alumnos):
+                
+                # Verificar si el curso tiene acceso al servidor y servicio
+                for servidor_config in curso.servidores:
+                    if (servidor_config['nombre'] == nombre_servidor and
+                        nombre_servicio in servidor_config['servicios_permitidos']):
+                        return True
+        
+        return False
     def get_attachment_point(self, mac: str) -> Optional[Dict]:
         """Obtener punto de conexión de un dispositivo por MAC"""
         try:
@@ -318,31 +343,6 @@ class SDNApp:
             print(f"Error al construir ruta: {e}")
             return False
     
-    def alumno_autorizado(self, codigo_alumno: str, nombre_servidor: str, nombre_servicio: str) -> bool:
-        """Verificar si un alumno está autorizado para acceder a un servicio"""
-        if codigo_alumno not in self.alumnos:
-            return False
-        
-        if nombre_servidor not in self.servidores:
-            return False
-        
-        servidor = self.servidores[nombre_servidor]
-        servicio = servidor.obtener_servicio(nombre_servicio)
-        if not servicio:
-            return False
-        
-        # Verificar en todos los cursos
-        for curso in self.cursos.values():
-            if (curso.estado == "DICTANDO" and 
-                codigo_alumno in curso.alumnos):
-                
-                # Verificar si el curso tiene acceso al servidor y servicio
-                for servidor_config in curso.servidores:
-                    if (servidor_config['nombre'] == nombre_servidor and
-                        nombre_servicio in servidor_config['servicios_permitidos']):
-                        return True
-        
-        return False
     
     def crear_conexion(self, codigo_alumno: str, nombre_servidor: str, nombre_servicio: str) -> Optional[str]:
         """Crear una conexión entre alumno y servidor"""
@@ -686,11 +686,6 @@ class SDNApp:
 def main():
     """Función principal"""
     app = SDNApp()
-    
-    try:
-        app.importar_yaml("datos.yaml")
-    except:
-        print("No se encontró archivo de configuración inicial")
     
     app.menu()
 
