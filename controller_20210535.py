@@ -232,56 +232,58 @@ class SDNApp:
                         return True
         
         return False
-    def get_attachment_point(self, mac: str) -> Optional[Dict]:
-        """Obtener punto de conexión de un dispositivo por MAC"""
-        try:
-            url = f"{FLOODLIGHT_URL}/wm/device/"
-            response = requests.get(url, timeout=5)
-            
-            if response.status_code == 200:
-                devices = response.json()
-                for device in devices:
-                    if 'mac' in device and device['mac'][0].upper() == mac.upper():
-                        if 'attachmentPoint' in device and device['attachmentPoint']:
-                            return device['attachmentPoint'][0]
-            return None
-            
-        except requests.RequestException as e:
-            print(f"Error al obtener attachment point: {e}")
-            return None
     
-    def get_route(self, src_dpid: str, src_port: int, dst_dpid: str, dst_port: int) -> Optional[List]:
-        """Obtener ruta entre dos puntos"""
-        try:
-            url = f"{FLOODLIGHT_URL}/wm/routing/routes/fast/{src_dpid}/{src_port}/{dst_dpid}/{dst_port}/json"
-            response = requests.get(url, timeout=5)
-            
-            if response.status_code == 200:
-                route_data = response.json()
-                if route_data:
-                    return route_data[0]['route']
-            return None
-            
-        except requests.RequestException as e:
-            print(f"Error al obtener ruta: {e}")
-            return None
     
+
+
     def build_route(self, alumno_mac: str, servidor_ip: str, servicio: Servicio) -> bool:
         """Construir e instalar rutas en la red"""
+        def get_attachment_points(mac_address):
+            url = f"{FLOODLIGHT_URL}/wm/device/"
+            response = requests.get(url)
+
+            if response.status_code == 200:
+                data = response.json()
+                for host in data:
+                    if mac_address.lower() in [m.lower() for m in host.get("mac", [])]:
+                        aps = host.get("attachmentPoint", [])
+                        if aps:
+                            punto = aps[0]
+                            return punto["switchDPID"], punto["port"]
+                        else:
+                            print(f"La MAC {mac_address} no tiene attachmentPoint.")
+                print(f"La MAC {mac_address} no fue encontrada.")
+            else:
+                print(f"[{response.status_code}]")
+                print(f"Respuesta: {response.text}")
+            
+            return None, None
+        
+        def get_route(src_dpid, src_port, dst_dpid, dst_port):
+
+            url = f"{FLOODLIGHT_URL}/wm/topology/route/{src_dpid}/{src_port}/{dst_dpid}/{dst_port}/json"
+            response = requests.get(url)
+
+            if response.status_code == 200:
+                ruta = response.json()
+                
+                return [(hop["switch"], hop["port"]["portNumber"]) for hop in ruta]
+            return []
         try:
             # Obtener attachment points
-            src_ap = self.get_attachment_point(alumno_mac)
-            dst_ap = self.get_attachment_point("00:00:00:00:00:00")  # Buscar por IP en lugar de MAC
             
-            if not src_ap or not dst_ap:
+            src_dpid, src_port = get_attachment_points(alumno_mac)
+            dst_dpid, dst_port = get_attachment_points("FA:16:3E:5F:6E:D7")
+            
+            if not src_dpid or not dst_dpid:
                 print("Error: No se pudieron obtener los attachment points")
                 return False
             
             # Obtener ruta
-            route = self.get_route(
-                src_ap['switch'], src_ap['port'],
-                dst_ap['switch'], dst_ap['port']
-            )
+            route = get_route(src_dpid, src_port, dst_dpid, dst_port)
+            
+            print(f'{src_dpid} "/" {src_port} "/" {dst_dpid} "/" {dst_port}')
+            print("Ruta encontrada")
             
             if not route:
                 print("Error: No se pudo calcular la ruta")
@@ -289,12 +291,13 @@ class SDNApp:
             
             # Instalar flows
             flow_entries = []
-            
+
             # Flow para tráfico alumno hacia el server
             for hop in route:
+                switch_dpid, output_port = hop
                 flow_entry = {
-                    "switch": hop['switch'],
-                    "name": f"flow_{self.connection_counter}_{hop['switch']}",
+                    "switch": switch_dpid,
+                    "name": f"flow_{self.connection_counter}_{switch_dpid}",
                     "cookie": "0",
                     "priority": "1000",
                     "active": "true",
@@ -305,39 +308,18 @@ class SDNApp:
                         "nw_proto": "6" if servicio.protocolo == "TCP" else "17",
                         "tp_dst": str(servicio.puerto)
                     },
-                    "actions": f"output={hop['port']}"
+                    "actions": f"output={output_port}"
                 }
                 
                 # Instalar flow
                 url = f"{FLOODLIGHT_URL}/wm/staticflowpusher/json"
-                response = requests.post(url, json=flow_entry, timeout=5)
+                response = requests.post(url, json=flow_entry, timeout=20)
                 
                 if response.status_code == 200:
                     flow_entries.append(flow_entry)
                 else:
-                    print(f"Error al instalar flow en switch {hop['switch']}")
+                    print(f"Error al instalar flow en switch {switch_dpid}")
                     return False
-            
-            # Flow para ARP OwO
-            arp_flow = {
-                "switch": src_ap['switch'],
-                "name": f"arp_flow_{self.connection_counter}",
-                "cookie": "0",
-                "priority": "1000",
-                "active": "true",
-                "match": {
-                    "dl_type": "0x0806"
-                },
-                "actions": "flood"
-            }
-            
-            url = f"{FLOODLIGHT_URL}/wm/staticflowpusher/json"
-            response = requests.post(url, json=arp_flow, timeout=5)
-            
-            if response.status_code == 200:
-                flow_entries.append(arp_flow)
-            
-            return True
             
         except Exception as e:
             print(f"Error al construir ruta: {e}")
